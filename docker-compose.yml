@@ -1,0 +1,54 @@
+# docker-compose.yml
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: urlshortener_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-urlshortener}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-urlshortener_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"   # Expose locally for debugging; remove in pure-production
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-urlshortener} -d ${POSTGRES_DB:-urlshortener_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── FastAPI App ─────────────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: urlshortener_app
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-urlshortener}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-urlshortener_db}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DEBUG: ${DEBUG:-false}
+      BASE_URL: ${BASE_URL:-http://localhost:8000}
+      SHORT_CODE_LENGTH: ${SHORT_CODE_LENGTH:-7}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy   # Wait for DB health check, not just container start
+    command: >
+      sh -c "
+        echo 'Running database migrations...' &&
+        alembic upgrade head &&
+        echo 'Starting application...' &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+      "
+
+volumes:
+  postgres_data:
+    driver: local
